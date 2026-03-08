@@ -15,7 +15,7 @@ app.add_middleware(
 
 
 @app.get("/")
-async def read():
+async def read():   
     return {"message":"Server video call AI đang chạy"}
 
 @app.post("/predict")
