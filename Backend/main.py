@@ -1,9 +1,15 @@
-from fastapi import FastAPI,File, UploadFile,WebSocket
-from fastapi.middleware.cors import CORSMiddleware  # cap quyen
-from deepface import DeepFace # AI phan tich cam xuc
-import shutil #xu ly du lieu anh
+from fastapi import FastAPI, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware 
+from deepface import DeepFace 
+import shutil 
+import uuid # Dùng để tạo tên file duy nhất
+import os
+import asyncio # Dùng để chạy DeepFace ở luồng phụ
 
-app= FastAPI()
+# Import router từ file api/room.py
+from api.room import router as room_router
+
+app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
@@ -13,6 +19,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ĐĂNG KÝ ROUTER
+app.include_router(room_router, prefix="/api")
 
 @app.get("/")
 async def read():   
@@ -20,30 +28,27 @@ async def read():
 
 @app.post("/predict")
 async def create_upload_file(file: UploadFile = File(...)):
-   
-    print(f"Đã nhận file ảnh: {file.filename}")
-
-    file_path="temp.jpg"
-
-    #luu du lieu len o cung => co dia chi cu the
-    with open(file_path,"wb") as buffer:
-        shutil.copyfileobj(file.file,buffer)
+    # 1. Tạo tên file duy nhất cho mỗi request
+    unique_id = str(uuid.uuid4())
+    file_path = f"temp_{unique_id}.jpg"
 
     try:
-        ket_qua=DeepFace.analyze(img_path=file_path, actions=['emotion'])
-        emotion=ket_qua[0]['dominant_emotion']
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
 
-        print(f'emotion: {emotion}')
+        # 2. Đưa tác vụ AI nặng sang một luồng khác (thread) để không làm lag Video Call
+        ket_qua = await asyncio.to_thread(DeepFace.analyze, img_path=file_path, actions=['emotion'])
+        emotion = ket_qua[0]['dominant_emotion']
+
         return {
-            'status':'success',
-            'emotion':emotion,
-            'confidence':0.95
+            'status': 'success',
+            'emotion': emotion,
+            'confidence': 0.95
         }
-    except Exception as e: #gom cac loi lai
+    except Exception as e: 
         print(f"Lỗi: {e}")
         return {"status": "error", "emotion": "No Face", "confidence": 0}
-
-@app.websocket('/ws')
-async def websocket_endpoint(websocket: WebSocket):
-    pass
-
+    finally:
+        # 3.  xóa ảnh sau khi phân tích xong để tránh rác ổ cứng
+        if os.path.exists(file_path):
+            os.remove(file_path)
